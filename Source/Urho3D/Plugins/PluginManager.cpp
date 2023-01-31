@@ -148,12 +148,12 @@ void PluginStack::StartApplication(const ea::string& mainPlugin)
         return;
     }
 
-    const PluginApplication* mainApplication = FindMainPlugin(mainPlugin);
+    mainApplication_ = FindMainPlugin(mainPlugin);
 
     for (const PluginInfo& info : applications_)
     {
         if (info.application_)
-            info.application_->StartApplication(info.application_ == mainApplication);
+            info.application_->StartApplication(info.application_ == mainApplication_);
     }
     isStarted_ = true;
 }
@@ -224,6 +224,11 @@ void PluginStack::StopApplication()
     }
 }
 
+PluginApplication* PluginStack::GetMainPlugin() const
+{
+    return mainApplication_;
+}
+
 void PluginManager::RegisterPluginApplication(const ea::string& name, PluginApplicationFactory factory)
 {
     getRegistry().emplace(name, factory);
@@ -247,7 +252,7 @@ PluginManager::PluginManager(Context* context)
     AddDynamicPlugin(scriptBundlePlugin);
 #endif
 
-    SubscribeToEvent(E_ENDFRAMEPRIVATE, [this](StringHash, VariantMap&) { Update(); });
+    SubscribeToEvent(E_ENDFRAMEPRIVATE, [this](StringHash, VariantMap&) { Update(false); });
 }
 
 PluginManager::~PluginManager()
@@ -257,7 +262,7 @@ PluginManager::~PluginManager()
 
     // Could have called PerformUnload() above,
     // but this way we get a consistent log message informing that module was unloaded.
-    Update();
+    Update(true);
 }
 
 void PluginManager::SerializeInBlock(Archive& archive)
@@ -319,6 +324,7 @@ bool PluginManager::IsPluginLoaded(const ea::string& name)
 
 bool PluginManager::AddDynamicPlugin(Plugin* plugin)
 {
+#if URHO3D_PLUGINS && !URHO3D_STATIC
     const ea::string& name = plugin->GetName();
     if (dynamicPlugins_.contains(name) || staticPlugins_.contains(name))
     {
@@ -346,6 +352,9 @@ bool PluginManager::AddDynamicPlugin(Plugin* plugin)
 
     URHO3D_LOGINFO("Loaded plugin '{}' version {}", name, plugin->GetVersion());
     return true;
+#else
+    return false;
+#endif
 }
 
 bool PluginManager::AddStaticPlugin(PluginApplication* pluginApplication)
@@ -365,6 +374,7 @@ bool PluginManager::AddStaticPlugin(PluginApplication* pluginApplication)
 
 Plugin* PluginManager::GetDynamicPlugin(const ea::string& name, bool ignoreUnloaded)
 {
+#if URHO3D_PLUGINS && !URHO3D_STATIC
     const auto iter = dynamicPlugins_.find(name);
     if (iter != dynamicPlugins_.end())
         return iter->second;
@@ -377,6 +387,9 @@ Plugin* PluginManager::GetDynamicPlugin(const ea::string& name, bool ignoreUnloa
         return nullptr;
 
     return plugin;
+#else
+    return nullptr;
+#endif
 }
 
 PluginApplication* PluginManager::GetPluginApplication(const ea::string& name, bool ignoreUnloaded, unsigned* version)
@@ -397,6 +410,13 @@ PluginApplication* PluginManager::GetPluginApplication(const ea::string& name, b
             return application;
     }
 
+    return nullptr;
+}
+
+PluginApplication* PluginManager::GetMainPlugin() const
+{
+    if (pluginStack_)
+        return pluginStack_->GetMainPlugin();
     return nullptr;
 }
 
@@ -424,7 +444,7 @@ void PluginManager::RestoreStack()
     SendEvent(E_ENDPLUGINRELOAD);
 }
 
-void PluginManager::Update()
+void PluginManager::Update(bool exiting)
 {
     if (stopPending_)
     {
@@ -446,12 +466,15 @@ void PluginManager::Update()
 
     for (const auto& [name, plugin] : dynamicPlugins_)
         UpdatePlugin(plugin, checkOutOfDate);
+    forceReload_ = false;
 
     ea::erase_if(dynamicPlugins_, [&](const auto& item) { return CheckAndRemoveUnloadedPlugin(item.second); });
 
+    if (exiting)
+        return;
+
     if (!pluginStack_)
         RestoreStack();
-    forceReload_ = false;
 
     if (startPending_)
     {

@@ -397,6 +397,7 @@ namespace SDL
 %include "Urho3D/Input/Controls.h"
 %include "Urho3D/Input/Input.h"
 %include "Urho3D/Input/MultitouchAdapter.h"
+%include "Urho3D/Input/AxisAdapter.h"
 %include "Urho3D/Input/DirectionalPadAdapter.h"
 %include "Urho3D/Input/DirectionAggregator.h"
 
@@ -426,9 +427,11 @@ URHO3D_REFCOUNTED_INTERFACE(Urho3D::AbstractFile, Urho3D::RefCounted);
 %include "Urho3D/IO/File.h"
 %include "Urho3D/IO/Log.h"
 %include "Urho3D/IO/MemoryBuffer.h"
-%include "Urho3D/IO/PackageFile.h"
 %include "Urho3D/IO/VectorBuffer.h"
 %include "Urho3D/IO/FileSystem.h"
+%include "Urho3D/IO/MountPoint.h"
+%include "Urho3D/IO/VirtualFileSystem.h"
+%include "Urho3D/IO/PackageFile.h"
 
 %ignore Urho3D::NonCopyable;
 %ignore Urho3D::ArchiveBase;
@@ -530,6 +533,7 @@ public:
 %include "Urho3D/Scene/UnknownComponent.h"
 %include "Urho3D/Scene/TrackedComponent.h"
 %include "Urho3D/Scene/PrefabReference.h"
+%include "Urho3D/Scene/PrefabResource.h"
 
 // --------------------------------------- Extra components ---------------------------------------
 %include "Urho3D/Input/FreeFlyController.h"
@@ -552,13 +556,11 @@ public:
 
 // --------------------------------------- IK ---------------------------------------
 #if defined(URHO3D_IK)
-%{ using Algorithm = Urho3D::IKSolver::Algorithm; %}
+%ignore Urho3D::IKSolverComponent::Initialize;
 
 %include "generated/Urho3D/_pre_ik.i"
-%include "Urho3D/IK/IKConstraint.h"
-%include "Urho3D/IK/IKEffector.h"
-%include "Urho3D/IK/IK.h"
 %include "Urho3D/IK/IKSolver.h"
+%include "Urho3D/IK/IKSolverComponent.h"
 #endif
 // --------------------------------------- Graphics ---------------------------------------
 %ignore Urho3D::FrustumOctreeQuery::TestDrawables;
@@ -646,6 +648,7 @@ public:
 %include "Urho3D/Graphics/GraphicsDefs.h"
 %interface_custom("%s", "I%s", Urho3D::GPUObject);
 %include "Urho3D/Graphics/GPUObject.h"
+%include "Urho3D/Graphics/PipelineStateTracker.h"
 %include "Urho3D/Graphics/IndexBuffer.h"
 %include "Urho3D/Graphics/VertexBuffer.h"
 %include "Urho3D/Graphics/Geometry.h"
@@ -701,6 +704,7 @@ public:
 %include "Urho3D/Graphics/Zone.h"
 %include "Urho3D/Graphics/Renderer.h"
 %include "Urho3D/Graphics/Graphics.h"
+%include "Urho3D/Graphics/OutlineGroup.h"
 
 // ------------------------------------- RenderPipeline -------------------------------------
 %include "generated/Urho3D/_pre_renderpipeline.i"
