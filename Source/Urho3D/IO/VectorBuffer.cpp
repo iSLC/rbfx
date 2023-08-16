@@ -29,7 +29,7 @@
 namespace Urho3D
 {
 
-static ea::string vectorBufferName{"VectorBuffer"};
+static const ea::string vectorBufferName{"VectorBuffer"};
 
 VectorBuffer::VectorBuffer() = default;
 
@@ -141,6 +141,9 @@ void VectorBuffer::Resize(unsigned size)
 
 const ea::string& VectorBuffer::GetName() const
 {
+    auto& baseName = AbstractFile::GetName();
+    if (!baseName.empty())
+        return baseName;
     return vectorBufferName;
 }
 

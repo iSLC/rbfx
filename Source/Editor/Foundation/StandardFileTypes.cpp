@@ -35,6 +35,7 @@
 #include <Urho3D/Resource/XMLFile.h>
 #include <Urho3D/Scene/PrefabResource.h>
 #include <Urho3D/Scene/Scene.h>
+#include <Urho3D/Scene/SceneResource.h>
 #include <Urho3D/UI/Font.h>
 #include <Urho3D/Utility/AssetPipeline.h>
 
@@ -60,8 +61,13 @@ void Foundation_StandardFileTypes(Context* context, Project* project)
 
     project->AddAnalyzeFileCallback([](ResourceFileDescriptor& desc, const AnalyzeFileContext& ctx)
     {
-        if (desc.HasExtension({".scene"}) || ctx.HasXMLRoot("scene"))
+        if (desc.HasExtension({".scene"}) || ctx.HasXMLRoot("scene")
+            // Support new scene format with legacy extension too
+            || (desc.HasExtension(".xml") && ctx.HasXMLRoot(SceneResource::GetXmlRootName())
+                && ctx.xmlFile_->GetRoot().HasAttribute("_id")))
+        {
             desc.AddObjectType<Scene>();
+        }
     });
 
     project->AddAnalyzeFileCallback([](ResourceFileDescriptor& desc, const AnalyzeFileContext& ctx)
@@ -128,7 +134,7 @@ void Foundation_StandardFileTypes(Context* context, Project* project)
 
     project->AddAnalyzeFileCallback([](ResourceFileDescriptor& desc, const AnalyzeFileContext& ctx)
     {
-        if (desc.HasExtension({".prefab"}))
+        if (desc.HasExtension({".prefab"}) || ctx.HasXMLRoot("scene"))
         {
             desc.AddObjectType<PrefabResource>();
         }

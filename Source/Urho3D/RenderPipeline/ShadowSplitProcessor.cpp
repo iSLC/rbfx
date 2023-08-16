@@ -146,7 +146,7 @@ void ShadowSplitProcessor::ProcessDirectionalShadowCasters(
     sortedShadowBatches_.clear();
 
     // Skip split if outside of the scene
-    if (!drawableProcessor->GetSceneZRange().Interset(cascadeZRange_))
+    if (!drawableProcessor->GetSceneZRange().Intersect(cascadeZRange_))
         return;
 
     // Query shadow casters
@@ -211,8 +211,8 @@ void ShadowSplitProcessor::FinalizeShadow(const ShadowMapRegion& shadowMap, unsi
         AdjustDirectionalLightCamera(shadowBox, shadowMapWidth);
     }
 
-    const unsigned padding = ea::min(4u, 1 + pcfKernelSize / 2);
-    const float effectiveShadowMapWidth = shadowMapWidth - 2.0f * padding;
+    shadowMapPadding_ = ea::min(4u, 1 + pcfKernelSize / 2);
+    const float effectiveShadowMapWidth = shadowMapWidth - 2.0f * shadowMapPadding_;
     shadowCamera_->SetZoom(effectiveShadowMapWidth / shadowMapWidth);
 
     // Estimate shadow map texel size. Exact size for directional light, upper bound for point and spot lights.
@@ -241,7 +241,7 @@ BoundingBox ShadowSplitProcessor::GetLitGeometriesBoundingBox(
     for (Drawable* drawable : litGeometries)
     {
         const FloatRange& geometryZRange = drawableProcessor->GetGeometryZRange(drawable->GetDrawableIndex());
-        if (geometryZRange.Interset(cascadeZRange_))
+        if (geometryZRange.Intersect(cascadeZRange_))
             litGeometriesBox.Merge(drawable->GetWorldBoundingBox());
     }
     return litGeometriesBox;

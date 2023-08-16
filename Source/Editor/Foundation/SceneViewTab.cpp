@@ -27,6 +27,7 @@
 
 #include <Urho3D/Engine/Engine.h>
 #include <Urho3D/Engine/EngineDefs.h>
+#include <Urho3D/Engine/EngineEvents.h>
 #include <Urho3D/Graphics/Camera.h>
 #include <Urho3D/Graphics/DebugRenderer.h>
 #include <Urho3D/Graphics/Texture2D.h>
@@ -52,7 +53,7 @@ namespace
 {
 
 const auto Hotkey_RewindSimulation = EditorHotkey{"SceneViewTab.RewindSimulation"}.Press(KEY_UNKNOWN);
-const auto Hotkey_TogglePaused = EditorHotkey{"SceneViewTab.TogglePaused"}.Press(KEY_PAUSE);
+const auto Hotkey_TogglePaused = EditorHotkey{"SceneViewTab.TogglePaused"}.Press(KEY_PAUSE).MaybeMouse();
 
 const auto Hotkey_Cut = EditorHotkey{"SceneViewTab.Cut"}.Ctrl().Press(KEY_X);
 const auto Hotkey_Copy = EditorHotkey{"SceneViewTab.Copy"}.Ctrl().Press(KEY_C);
@@ -215,6 +216,9 @@ SceneViewTab::SceneViewTab(Context* context)
     BindHotkey(Hotkey_MoveScaleToLatest, &SceneViewTab::MoveSelectionScaleToLatest);
     BindHotkey(Hotkey_CreateSiblingNode, &SceneViewTab::CreateNodeNextToSelection);
     BindHotkey(Hotkey_CreateChildNode, &SceneViewTab::CreateNodeInSelection);
+
+    SubscribeToEvent(E_BEGINPLUGINRELOAD, &SceneViewTab::BeginPluginReload);
+    SubscribeToEvent(E_ENDPLUGINRELOAD, &SceneViewTab::EndPluginReload);
 }
 
 SceneViewTab::~SceneViewTab()
@@ -939,6 +943,8 @@ void SceneViewTab::SavePageScene(SceneViewPage& page) const
             cache->ReloadResource(prefabResource);
         if (auto sceneResource = cache->GetExistingResource<SceneResource>(resourceName))
             cache->ReloadResource(sceneResource);
+        if (auto xmlResource = cache->GetExistingResource<XMLFile>(resourceName))
+            cache->ReloadResource(xmlResource);
     });
 }
 
@@ -1160,6 +1166,26 @@ void SceneViewTab::LoadPageConfig(SceneViewPage& page) const
     }
 }
 
+void SceneViewTab::BeginPluginReload()
+{
+    for (const auto& [_, page] : scenes_)
+    {
+        page->archivedScene_ = PackedSceneData::FromScene(page->scene_);
+        page->archivedSelection_ = page->selection_.Pack();
+        page->scene_->Clear();
+    }
+}
+
+void SceneViewTab::EndPluginReload()
+{
+    for (const auto& [_, page] : scenes_)
+    {
+        page->scene_->Clear();
+        page->archivedScene_.ToScene(page->scene_);
+        page->selection_.Load(page->scene_, page->archivedSelection_);
+    }
+}
+
 SimulateSceneAction::SimulateSceneAction(SceneViewPage* page)
     : page_(page)
 {
@@ -1289,7 +1315,8 @@ ea::vector<RayQueryResult> QueryGeometriesFromScene(Scene* scene, const Ray& ray
 {
     ea::vector<RayQueryResult> results;
     RayOctreeQuery query(results, ray, level, maxDistance, DRAWABLE_GEOMETRY, viewMask);
-    scene->GetComponent<Octree>()->Raycast(query);
+    if (auto octree = scene->GetComponent<Octree>())
+        octree->Raycast(query);
     return results;
 }
 

@@ -25,6 +25,7 @@
 #include "../Container/Functors.h"
 #include "../Core/Context.h"
 #include "../Core/Exception.h"
+#include "../Core/StringUtils.h"
 #include "../Graphics/AnimatedModel.h"
 #include "../Graphics/Animation.h"
 #include "../Graphics/AnimationController.h"
@@ -64,6 +65,7 @@
 
 #include <cctype>
 #include <exception>
+#include <regex>
 
 #include "../DebugNew.h"
 
@@ -182,6 +184,128 @@ struct InlineTransform
             * Matrix3x4::FromScale(1.0f / scale_);
     }
 };
+
+using SourceToDestinationMap = ea::unordered_map<int, int>;
+
+SourceToDestinationMap MapNodesByNames(const tg::Model& sourceModel, const tg::Model& destModel)
+{
+    SourceToDestinationMap result;
+    for (unsigned sourceIndex = 0; sourceIndex < sourceModel.nodes.size(); ++sourceIndex)
+    {
+        const auto& sourceNode = sourceModel.nodes[sourceIndex];
+        if (sourceNode.name.empty())
+            continue;
+
+        const auto iter = ea::find_if(destModel.nodes.begin(), destModel.nodes.end(),
+            [&sourceNode](const auto& node) { return node.name == sourceNode.name; });
+        if (iter == destModel.nodes.end())
+            continue;
+
+        const int destIndex = static_cast<int>(iter - destModel.nodes.begin());
+        result[sourceIndex] = destIndex;
+    }
+    return result;
+}
+
+unsigned CountMergeableResources(const tg::Model& inputModel)
+{
+    return inputModel.animations.size();
+}
+
+void MergeModels(tg::Model& outputModel, tg::Model&& inputModel, ea::optional<ea::string> overrideName)
+{
+    const SourceToDestinationMap sourceToDestNodeIndex = MapNodesByNames(inputModel, outputModel);
+
+    StringVector sourceNodeNames;
+    ea::transform(inputModel.nodes.begin(), inputModel.nodes.end(), ea::back_inserter(sourceNodeNames),
+        [](const tg::Node& node) { return node.name.c_str(); });
+
+    if (CountMergeableResources(inputModel) && overrideName.has_value())
+    {
+        if (inputModel.animations.size() == 1)
+            inputModel.animations[0].name = overrideName->c_str();
+    }
+
+    // Consume buffers
+    const auto startBufferIndex = outputModel.buffers.size();
+    outputModel.buffers.insert(outputModel.buffers.end(), ea::make_move_iterator(inputModel.buffers.begin()),
+        ea::make_move_iterator(inputModel.buffers.end()));
+
+    // Consume and patch buffer views
+    const auto startBufferViewIndex = outputModel.bufferViews.size();
+    outputModel.bufferViews.insert(outputModel.bufferViews.end(),
+        ea::make_move_iterator(inputModel.bufferViews.begin()), ea::make_move_iterator(inputModel.bufferViews.end()));
+
+    for (unsigned i = startBufferViewIndex; i < outputModel.bufferViews.size(); ++i)
+    {
+        tg::BufferView& bufferView = outputModel.bufferViews[i];
+        bufferView.buffer += startBufferIndex;
+    }
+
+    // Consume and patch accessors
+    const auto startAccessorIndex = outputModel.accessors.size();
+    outputModel.accessors.insert(outputModel.accessors.end(), ea::make_move_iterator(inputModel.accessors.begin()),
+        ea::make_move_iterator(inputModel.accessors.end()));
+
+    for (unsigned i = startAccessorIndex; i < outputModel.accessors.size(); ++i)
+    {
+        tg::Accessor& accessor = outputModel.accessors[i];
+        accessor.bufferView += startBufferViewIndex;
+    }
+
+    // Consume and patch animations
+    const auto startAnimationIndex = outputModel.animations.size();
+    outputModel.animations.insert(outputModel.animations.end(), ea::make_move_iterator(inputModel.animations.begin()),
+        ea::make_move_iterator(inputModel.animations.end()));
+
+    ea::unordered_set<ea::string> ignoredNodes;
+    for (unsigned i = startAnimationIndex; i < outputModel.animations.size(); ++i)
+    {
+        tg::Animation& animation = outputModel.animations[i];
+        for (tg::AnimationChannel& channel : animation.channels)
+        {
+            const auto iter = sourceToDestNodeIndex.find(channel.target_node);
+            if (iter != sourceToDestNodeIndex.end())
+                channel.target_node = iter->second;
+            else
+            {
+                if (channel.target_node >= 0 && channel.target_node < static_cast<int>(sourceNodeNames.size()))
+                    ignoredNodes.emplace(sourceNodeNames[channel.target_node]);
+                else
+                    ignoredNodes.emplace("[Invalid node]");
+
+                channel.target_node = -1; // To be removed later
+            }
+        }
+
+        for (tg::AnimationSampler& sampler : animation.samplers)
+        {
+            sampler.input += startAccessorIndex;
+            sampler.output += startAccessorIndex;
+        }
+
+        const auto isInvalidChannel = [](const tg::AnimationChannel& channel) { return channel.target_node == -1; };
+        animation.channels.erase(ea::remove_if(animation.channels.begin(), animation.channels.end(), isInvalidChannel),
+            animation.channels.end());
+    }
+
+    if (!ignoredNodes.empty())
+    {
+        const auto ignoredNodesString =
+            ea::string::joined(StringVector{ignoredNodes.begin(), ignoredNodes.end()}, ", ");
+        URHO3D_LOGWARNING("Ignored nodes in animation: {}", ignoredNodesString);
+    }
+}
+
+void RenameNodes(tg::Model& model, const ea::unordered_map<ea::string, ea::string>& mapping)
+{
+    for (tg::Node& node : model.nodes)
+    {
+        const auto iter = mapping.find(node.name.c_str());
+        if (iter != mapping.end())
+            node.name = iter->second.c_str();
+    }
+}
 
 /// Raw imported input, parameters and generic output layout.
 class GLTFImporterBase : public NonCopyable
@@ -539,6 +663,14 @@ struct GLTFNode : public ea::enable_shared_from_this<GLTFNode>
     /// @}
 
     const ea::string& GetEffectiveName() const { return uniqueBoneName_ ? *uniqueBoneName_ : name_; }
+
+    /// Check if this node subtree contains nothing but empty nodes.
+    bool IsRecursivelyEmpty() const
+    {
+        return !mesh_ && !skin_ && containedInSkins_.empty()
+            && ea::all_of(children_.begin(), children_.end(),
+                [](const GLTFNodePtr& child) { return child->IsRecursivelyEmpty(); });
+    }
 };
 
 /// Represents Urho skeleton which may be composed from one or more GLTF skins.
@@ -1002,6 +1134,7 @@ private:
             GLTFSkeleton& skeleton = skeletons_[skeletonIndex];
             skeleton.index_ = skeletonIndex;
             InitializeSkeletonRootNode(skeleton);
+            AppendEmptyNodesToSkeleton(skeleton);
             AssignSkeletonBoneNames(skeleton);
             if (base_.GetSettings().cleanupBoneNames_)
                 CleanupSkeletonBoneNames(skeleton);
@@ -1040,6 +1173,33 @@ private:
             if (!skeleton.rootNode_ || (skeleton.rootNode_->skeletonIndex_ != skeleton.index_))
                 throw RuntimeException("Cannot find root of the skeleton when processing skin #{}", skinIndex);
         }
+    }
+
+    void AppendEmptyNodesToSkeleton(GLTFSkeleton& skeleton) const
+    {
+        if (!base_.GetSettings().addEmptyNodesToSkeleton_)
+            return;
+
+        ForEachSkeletonNode(*skeleton.rootNode_, skeleton.index_,
+            [&](GLTFNode& boneNode)
+        {
+            for (const GLTFNodePtr& child : boneNode.children_)
+            {
+                if (child->skeletonIndex_ == skeleton.index_)
+                    continue;
+
+                // For each direct child of the bone node that is not a part of the skeleton,
+                // check if it is empty and if so, add it to the skeleton.
+                if (!child->IsRecursivelyEmpty())
+                    continue;
+
+                ForEach(ea::span<const GLTFNodePtr>{&child, 1u},
+                    [&](GLTFNode& emptyNode)
+                {
+                    emptyNode.skeletonIndex_ = skeleton.index_;
+                });
+            }
+        });
     }
 
     void AssignSkeletonBoneNames(GLTFSkeleton& skeleton) const
@@ -2299,7 +2459,6 @@ private:
         if (isAlphaMask)
         {
             shaderDefines += "ALPHAMASK ";
-            // TODO: Add support in standard shader
             material.SetShaderParameter("AlphaCutoff", static_cast<float>(sourceMaterial.alphaCutoff));
         }
 
@@ -2491,6 +2650,9 @@ public:
         , materialImporter_(materialImporter)
     {
         InitializeModels();
+        if (base_.GetSettings().combineLODs_)
+            CombineLODs();
+        CookModels();
     }
 
     void SaveResources()
@@ -2504,7 +2666,7 @@ public:
         return GetImportedModel(meshIndex, skinIndex).model_;
     }
 
-    const StringVector& GetModelMaterials(int meshIndex, int skinIndex) const
+    const ResourceRefList& GetModelMaterials(int meshIndex, int skinIndex) const
     {
         return GetImportedModel(meshIndex, skinIndex).materials_;
     }
@@ -2512,12 +2674,17 @@ public:
 private:
     struct ImportedModel
     {
-        GLTFNodePtr skeleton_;
+        ea::string meshName_;
+        ea::optional<unsigned> skin_;
+        ea::string baseMeshName_;
+        ea::optional<float> lodDistance_;
+
         SharedPtr<ModelView> modelView_;
         SharedPtr<Model> model_;
-        StringVector materials_;
+        ResourceRefList materials_;
+
+        bool alreadyProcessedAsLOD_{};
     };
-    using ImportedModelPtr = ea::shared_ptr<ImportedModel>;
 
     void InitializeModels()
     {
@@ -2525,13 +2692,131 @@ private:
         {
             const tg::Mesh& sourceMesh = model_.meshes[pair->mesh_];
 
-            ImportedModel model;
+            ImportedModel& model = models_.emplace_back();
+            model.meshName_ = sourceMesh.name.c_str();
+            model.skin_ = pair->skin_;
+
+            const auto [baseName, distance] = ParseLodDistance(model.meshName_);
+            model.baseMeshName_ = baseName;
+            model.lodDistance_ = distance;
+
             model.modelView_ = ImportModelView(sourceMesh, hierarchyAnalyzer_.GetSkinBones(pair->skin_));
-            model.model_ = model.modelView_->ExportModel();
-            model.materials_ = model.modelView_->ExportMaterialList();
-            base_.AddToResourceCache(model.model_);
-            models_.push_back(model);
         }
+    }
+
+    void CombineLODs()
+    {
+        for (ImportedModel& importedModel : models_)
+        {
+            if (!importedModel.lodDistance_ || importedModel.alreadyProcessedAsLOD_)
+                continue;
+
+            const auto lods = FindLods(importedModel);
+            URHO3D_ASSERT(!lods.empty());
+
+            auto finalModelView = lods[0]->modelView_;
+            auto& finalGeometries = finalModelView->GetGeometries();
+
+            // Set LOD distance for the first LOD
+            for (GeometryView& geometryView : finalGeometries)
+            {
+                if (geometryView.lods_.empty())
+                    continue;
+
+                if (geometryView.lods_.size() > 1)
+                    geometryView.lods_.resize(1);
+                geometryView.lods_[0].lodDistance_ = *lods[0]->lodDistance_;
+            }
+
+            // Append other LODs
+            // TODO: Handle materials more gracefully
+            for (unsigned lodIndex = 1; lodIndex < lods.size(); ++lodIndex)
+            {
+                const auto& otherModelView = lods[lodIndex]->modelView_;
+                const auto& otherGeometries = otherModelView->GetGeometries();
+                const float lodDistance = *lods[lodIndex]->lodDistance_;
+
+                const unsigned numOtherGeometries = otherGeometries.size();
+                if (numOtherGeometries > finalGeometries.size())
+                    finalGeometries.resize(numOtherGeometries);
+
+                for (size_t geometryIndex = 0; geometryIndex < numOtherGeometries; ++geometryIndex)
+                {
+                    const auto& otherGeometryView = otherGeometries[geometryIndex];
+                    auto& geometryView = finalGeometries[geometryIndex];
+
+                    geometryView.lods_.push_back(otherGeometryView.lods_[0]);
+                    geometryView.lods_.back().lodDistance_ = lodDistance;
+                }
+            }
+
+            for (ImportedModel* otherImportedModel : lods)
+            {
+                otherImportedModel->modelView_ = finalModelView;
+                otherImportedModel->alreadyProcessedAsLOD_ = true;
+            }
+        }
+    }
+
+    void CookModels()
+    {
+        ea::unordered_map<SharedPtr<ModelView>, SharedPtr<Model>> viewToModel;
+        for (ImportedModel& importedModel : models_)
+        {
+            importedModel.materials_ = importedModel.modelView_->ExportMaterialList();
+
+            SharedPtr<Model>& model = viewToModel[importedModel.modelView_];
+            if (!model)
+            {
+                const ea::string modelName =
+                    base_.GetResourceName(importedModel.baseMeshName_, "Models/", "Model", ".mdl");
+                importedModel.modelView_->SetName(modelName);
+
+                model = importedModel.modelView_->ExportModel();
+                base_.AddToResourceCache(model);
+                modelsToSave_.push_back(model);
+            }
+
+            importedModel.model_ = model;
+        }
+    }
+
+    ea::vector<ImportedModel*> FindLods(const ImportedModel& importedModel)
+    {
+        ea::map<float, ImportedModel*> lods;
+        for (ImportedModel& otherModel : models_)
+        {
+            if (otherModel.baseMeshName_ == importedModel.baseMeshName_ && otherModel.lodDistance_
+                && otherModel.skin_ == importedModel.skin_)
+            {
+                if (lods.contains(*otherModel.lodDistance_))
+                {
+                    URHO3D_LOGERROR("Multiple LODs with the same distance {} for model {}", *otherModel.lodDistance_,
+                        otherModel.meshName_);
+                    continue;
+                }
+
+                lods.emplace(*otherModel.lodDistance_, &otherModel);
+            }
+        }
+
+        ea::vector<ImportedModel*> result;
+        const auto takeSecond = [](const auto& pair) { return pair.second; };
+        ea::transform(lods.begin(), lods.end(), ea::back_inserter(result), takeSecond);
+        return result;
+    }
+
+    static ea::pair<ea::string, ea::optional<float>> ParseLodDistance(const ea::string& name)
+    {
+        static const std::regex r{R"(^(.*)_LOD(\d+(\.\d+)?)$)"};
+        std::cmatch match;
+        if (std::regex_match(name.c_str(), match, r))
+        {
+            const ea::string baseName{match[1].first, match[1].second};
+            const float distance = ToFloat(ea::string{match[2].first, match[2].second});
+            return {baseName, distance};
+        }
+        return {name, ea::nullopt};
     }
 
     const ImportedModel& GetImportedModel(int meshIndex, int skinIndex) const
@@ -2542,10 +2827,7 @@ private:
 
     SharedPtr<ModelView> ImportModelView(const tg::Mesh& sourceMesh, const ea::vector<BoneView>& bones)
     {
-        const ea::string modelName = base_.GetResourceName(sourceMesh.name.c_str(), "Models/", "Model", ".mdl");
-
         auto modelView = MakeShared<ModelView>(base_.GetContext());
-        modelView->SetName(modelName);
         modelView->SetBones(bones);
 
         const unsigned numMorphWeights = sourceMesh.weights.size();
@@ -2798,6 +3080,7 @@ private:
     GLTFMaterialImporter& materialImporter_;
 
     ea::vector<ImportedModel> models_;
+    ea::vector<SharedPtr<Model>> modelsToSave_;
 };
 
 /// Utility to import animations.
@@ -3164,6 +3447,17 @@ private:
                 scene->CreateChild("Disabled Node Placeholder");
         }
 
+        if (!settings.skipTag_.empty())
+        {
+            const auto children = rootNode->GetChildren(true);
+            const ea::vector<WeakPtr<Node>> weakChildren(children.begin(), children.end());
+            for (Node* child : weakChildren)
+            {
+                if (child && child->GetName().contains(settings.skipTag_))
+                    child->Remove();
+            }
+        }
+
         if (settings.cleanupRootNodes_)
         {
             Node* newRootNode = rootNode;
@@ -3274,10 +3568,13 @@ private:
         staticModel.SetModel(model);
         staticModel.SetCastShadows(true);
 
-        const StringVector& materialList = modelImporter_.GetModelMaterials(meshIndex, skinIndex);
-        for (unsigned i = 0; i < materialList.size(); ++i)
+        const ResourceRefList& materialList = modelImporter_.GetModelMaterials(meshIndex, skinIndex);
+        if (materialList.type_ != Material::GetTypeStatic())
+            return;
+
+        for (unsigned i = 0; i < materialList.names_.size(); ++i)
         {
-            auto material = cache->GetResource<Material>(materialList[i]);
+            auto material = cache->GetResource<Material>(materialList.names_[i]);
             staticModel.SetMaterial(i, material);
         }
     }
@@ -3433,9 +3730,9 @@ tg::Model LoadGLTF(const ea::string& fileName)
 class GLTFImporter::Impl
 {
 public:
-    explicit Impl(Context* context, const GLTFImporterSettings& settings, const ea::string& fileName,
+    explicit Impl(Context* context, const GLTFImporterSettings& settings, tg::Model sourceModel,
         const ea::string& outputPath, const ea::string& resourceNamePrefix)
-        : importerContext_(context, settings, LoadGLTF(fileName), outputPath, resourceNamePrefix)
+        : importerContext_(context, settings, ea::move(sourceModel), outputPath, resourceNamePrefix)
         , bufferReader_(importerContext_)
         , hierarchyAnalyzer_(importerContext_, bufferReader_)
         , textureImporter_(importerContext_)
@@ -3480,10 +3777,15 @@ void SerializeValue(Archive& archive, const char* name, GLTFImporterSettings& va
 
     SerializeValue(archive, "cleanupBoneNames", value.cleanupBoneNames_);
     SerializeValue(archive, "cleanupRootNodes", value.cleanupRootNodes_);
+    SerializeValue(archive, "combineLODs", value.combineLODs_);
     SerializeValue(archive, "repairLooping", value.repairLooping_);
+    SerializeValue(archive, "skipTag", value.skipTag_);
+    SerializeValue(archive, "keepNamesOnMerge", value.keepNamesOnMerge_);
+    SerializeValue(archive, "addEmptyNodesToSkeleton", value.addEmptyNodesToSkeleton_);
 
     SerializeValue(archive, "offsetMatrixError", value.offsetMatrixError_);
     SerializeValue(archive, "keyFrameTimeError", value.keyFrameTimeError_);
+    SerializeValue(archive, "nodeRenames", value.nodeRenames_);
 
     SerializeValue(archive, "addLights", value.preview_.addLights_);
     SerializeValue(archive, "addSkybox", value.preview_.addSkybox_);
@@ -3497,23 +3799,72 @@ GLTFImporter::GLTFImporter(Context* context, const GLTFImporterSettings& setting
     : Object(context)
     , settings_(settings)
 {
-
 }
 
 GLTFImporter::~GLTFImporter()
 {
-
 }
 
-bool GLTFImporter::LoadFile(const ea::string& fileName,
-    const ea::string& outputPath, const ea::string& resourceNamePrefix)
+bool GLTFImporter::LoadFile(const ea::string& fileName)
 {
     try
     {
-        impl_ = ea::make_unique<Impl>(context_, settings_, fileName, outputPath, resourceNamePrefix);
+        if (model_ || impl_)
+            throw RuntimeException("Primary source model is already loaded");
+
+        model_ = ea::make_unique<tg::Model>(LoadGLTF(fileName));
+        RenameNodes(*model_, settings_.nodeRenames_);
         return true;
     }
-    catch(const RuntimeException& e)
+    catch (const RuntimeException& e)
+    {
+        URHO3D_LOGERROR("{}", e.what());
+        return false;
+    }
+}
+
+bool GLTFImporter::MergeFile(const ea::string& fileName, const ea::string& assetName)
+{
+    try
+    {
+        if (impl_)
+            throw RuntimeException("Source GLTF model is already processed");
+
+        if (!model_)
+            throw RuntimeException("Primary source model is not loaded");
+
+        ea::optional<ea::string> overrideName;
+        if (!settings_.keepNamesOnMerge_)
+            overrideName = assetName;
+
+        auto secondaryModel = LoadGLTF(fileName);
+        RenameNodes(secondaryModel, settings_.nodeRenames_);
+
+        MergeModels(*model_, ea::move(secondaryModel), overrideName);
+        return true;
+    }
+    catch (const RuntimeException& e)
+    {
+        URHO3D_LOGERROR("{}", e.what());
+        return false;
+    }
+}
+
+bool GLTFImporter::Process(const ea::string& outputPath, const ea::string& resourceNamePrefix)
+{
+    try
+    {
+        if (!model_)
+            throw RuntimeException("Source GLTF model is not loaded");
+
+        if (impl_)
+            throw RuntimeException("Source GLTF model is already processed");
+
+        impl_ = ea::make_unique<Impl>(context_, settings_, ea::move(*model_), outputPath, resourceNamePrefix);
+        model_ = nullptr;
+        return true;
+    }
+    catch (const RuntimeException& e)
     {
         URHO3D_LOGERROR("{}", e.what());
         return false;
@@ -3530,7 +3881,7 @@ bool GLTFImporter::SaveResources()
         impl_->SaveResources();
         return true;
     }
-    catch(const RuntimeException& e)
+    catch (const RuntimeException& e)
     {
         URHO3D_LOGERROR("{}", e.what());
         return false;
@@ -3549,4 +3900,4 @@ const GLTFImporter::ResourceToFileNameMap& GLTFImporter::GetSavedResources() con
     return impl_->GetResourceNames();
 }
 
-}
+} // namespace Urho3D

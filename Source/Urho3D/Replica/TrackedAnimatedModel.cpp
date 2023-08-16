@@ -61,7 +61,7 @@ void TrackedAnimatedModel::InitializeOnServer()
     boundingBoxTrace_.Resize(traceDuration);
 
     SubscribeToEvent(E_ENDSERVERNETWORKFRAME,
-        [this](StringHash, VariantMap& eventData)
+        [this](VariantMap& eventData)
     {
         using namespace BeginServerNetworkFrame;
         const auto serverFrame = static_cast<NetworkFrame>(eventData[P_FRAME].GetInt64());
@@ -136,7 +136,7 @@ void TrackedAnimatedModel::ProcessTemporalRayQuery(const NetworkTime& time, cons
     const auto bonePositions = bonePositionsTrace_.SampleValid(time);
     const auto boneRotations = boneRotationsTrace_.SampleValid(time);
 
-    static thread_local ea::vector<Matrix3x4> boneTransformsStorage;
+    thread_local ea::vector<Matrix3x4> boneTransformsStorage;
     auto& boneTransforms = boneTransformsStorage;
     auto boneTransforms11 = boneTransformsStorage;
     boneTransforms.resize(numBones);

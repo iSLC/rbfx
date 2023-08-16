@@ -91,6 +91,8 @@ public:
     bool IsRendering() const { return isRendering_; }
     /// Return true if input is captured by UI.
     bool IsInputCaptured() const;
+    /// Returns true if any window of this UI context is hovered by mouse.
+    bool IsHovered() const;
     /// Update the UI logic. Called by HandlePostUpdate().
     void Update(float timeStep);
     /// Render UI.
@@ -110,8 +112,6 @@ public:
 private:
     /// Returns a size that this UI screen will cover.
     IntVector2 GetDesiredCanvasSize() const;
-    /// Returns true if any window of this UI context is hovered by mouse.
-    bool IsHovered() const;
     /// Return true if input is captured by this instance of RmlUI.
     bool IsInputCapturedInternal() const;
     /// Signal that document belonging to this subsystem was closed.
@@ -166,13 +166,30 @@ private:
     friend class Detail::RmlPlugin;
 };
 
-/// Convert math types from/to RmlUI
+/// Convert math types and Variant from/to RmlUI
 /// @{
 inline Rml::Vector2f ToRmlUi(const Vector2& value) { return {value.x_, value.y_}; };
+inline Rml::Vector3f ToRmlUi(const Vector3& value) { return {value.x_, value.y_, value.z_}; };
+inline Rml::Vector4f ToRmlUi(const Vector4& value) { return {value.x_, value.y_, value.z_, value.w_}; };
+inline Rml::Colourf ToRmlUi(const Color& value) { return {value.r_, value.g_, value.b_, value.a_}; };
 inline Rml::Vector2i ToRmlUi(const IntVector2& value) { return {value.x_, value.y_}; };
+bool ToRmlUi(const Variant& src, Rml::Variant& dst);
 
 inline Vector2 ToVector2(const Rml::Vector2f& value) { return {value.x, value.y}; }
-inline IntVector2 ToIntVector2(const Rml::Vector2i& value) { return {value.x, value.y}; }
+inline Vector3 ToVector3(const Rml::Vector3f& value) { return {value.x, value.y, value.z}; }
+inline Vector4 ToVector4(const Rml::Vector4f& value) { return {value.x, value.y, value.z, value.w}; }
+inline Color ToColor(const Rml::Colourf& value) { return {value.red, value.green, value.blue, value.alpha}; }
+inline Color ToColor(const Rml::Colourb& value)
+{
+    return Color{static_cast<float>(value.red), static_cast<float>(value.green), static_cast<float>(value.blue),
+               static_cast<float>(value.alpha)}
+    * (1.0f / 255.0f);
+}
+inline IntVector2 ToIntVector2(const Rml::Vector2i& value)
+{
+    return {value.x, value.y};
+}
+bool FromRmlUi(const Rml::Variant& src, Variant& dst);
 /// @}
 
 namespace Detail

@@ -179,10 +179,7 @@ ea::optional<float> InternalReflectionProbeData::GetIntersectionVolume(const Bou
 ReflectionProbeManager::ReflectionProbeManager(Context* context)
     : TrackedComponentRegistryBase(context, ReflectionProbe::GetTypeStatic())
 {
-    SubscribeToEvent(E_DEVICERESET, [this](StringHash, VariantMap&)
-    {
-        RestoreCubemaps();
-    });
+    SubscribeToEvent(E_DEVICERESET, &ReflectionProbeManager::RestoreCubemaps);
 }
 
 ReflectionProbeManager::~ReflectionProbeManager()
@@ -498,7 +495,7 @@ void ReflectionProbeManager::QueryDynamicProbes(const BoundingBox& worldBounding
 void ReflectionProbeManager::QueryStaticProbes(const BoundingBox& worldBoundingBox,
     ea::span<ReflectionProbeReference, 2> probes, float& cacheDistanceSquared) const
 {
-    static thread_local ea::vector<const ReflectionProbeBVH*> tempIntersectedProbes;
+    thread_local ea::vector<const ReflectionProbeBVH*> tempIntersectedProbes;
     auto& intersectedProbes = tempIntersectedProbes;
     intersectedProbes.clear();
 

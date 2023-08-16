@@ -79,10 +79,7 @@ struct LightBaker::TaskData
 LightBaker::LightBaker(Context* context) :
     Component(context)
 {
-    SubscribeToEvent(E_UPDATE, [this](StringHash eventType, VariantMap& eventData)
-    {
-        Update();
-    });
+    SubscribeToEvent(E_UPDATE, &LightBaker::Update);
 }
 
 LightBaker::~LightBaker()
@@ -278,7 +275,7 @@ const ea::string& LightBaker::GetBakeLabel() const
     if (taskData_)
     {
         const IncrementalLightBakerStatus& status = taskData_->baker_.GetStatus();
-        static thread_local ea::string statusText;
+        thread_local ea::string statusText;
         statusText = status.ToString();
         return statusText;
     }

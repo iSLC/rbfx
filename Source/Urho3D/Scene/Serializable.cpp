@@ -384,8 +384,9 @@ bool Serializable::LoadFile(const ea::string& resourceName)
 {
     ResourceCache* cache = GetSubsystem<ResourceCache>();
     // Router may redirect to different file.
-    ea::string realResourceName = resourceName;
-    cache->RouteResourceName(realResourceName, RESOURCE_CHECKEXISTS);
+    auto realResourceId = FileIdentifier::FromUri(resourceName);
+    cache->RouteResourceName(realResourceId);
+    const ea::string realResourceName = realResourceId.ToUri();
     ea::string extension = GetExtension(realResourceName);
 
     if (extension == ".xml")
@@ -403,7 +404,7 @@ void Serializable::SerializeInBlock(Archive& archive)
 void Serializable::SerializeInBlock(Archive& archive, bool serializeTemporary)
 {
     const bool compactSave = !archive.IsHumanReadable();
-    const PrefabArchiveFlags flags = PrefabArchiveFlag::IgnoreSerializableId
+    const PrefabArchiveFlags flags = PrefabArchiveFlag::IgnoreSerializableId | PrefabArchiveFlag::IgnoreSerializableType
         | (serializeTemporary ? PrefabArchiveFlag::SerializeTemporary : PrefabArchiveFlag::None);
 
     SerializablePrefab prefab;
@@ -611,6 +612,34 @@ unsigned Serializable::GetNumAttributes() const
 {
     const ea::vector<AttributeInfo>* attributes = GetAttributes();
     return attributes ? attributes->size() : 0;
+}
+
+void Serializable::CopyAttributes(const Serializable* source, bool resetToDefault)
+{
+    URHO3D_ASSERT(source);
+
+    if (resetToDefault)
+        ResetToDefault();
+
+    const auto* sourceAttributes = source->GetAttributes();
+    const auto* destAttributes = GetAttributes();
+    if (!sourceAttributes || !destAttributes)
+        return;
+
+    if (sourceAttributes != destAttributes)
+    {
+        URHO3D_LOGERROR("Source and destination objects have different types");
+        return;
+    }
+
+    for (unsigned i = 0; i < sourceAttributes->size(); ++i)
+    {
+        const AttributeInfo& attr = sourceAttributes->at(i);
+
+        Variant value;
+        source->OnGetAttribute(attr, value);
+        OnSetAttribute(attr, value);
+    }
 }
 
 void Serializable::SetInstanceDefault(const ea::string& name, const Variant& defaultValue)

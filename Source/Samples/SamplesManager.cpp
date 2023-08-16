@@ -26,6 +26,7 @@
 #include <Urho3D/Input/Input.h>
 #include <Urho3D/Input/InputEvents.h>
 #include <Urho3D/IO/FileSystem.h>
+#include <Urho3D/IO/VirtualFileSystem.h>
 #include <Urho3D/RenderPipeline/RenderPipeline.h>
 #include <Urho3D/Resource/ResourceCache.h>
 #if URHO3D_RMLUI
@@ -139,10 +140,20 @@
 #endif
 #include "111_SplashScreen/SplashScreenDemo.h"
 #include "112_AggregatedInput/AggregatedInput.h"
+#if URHO3D_ACTIONS
+#include "113_Actions/ActionDemo.h"
+#endif
 #if URHO3D_RMLUI
 #include "114_AdvancedUI/AdvancedUI.h"
 #endif
+#if URHO3D_PHYSICS
 #include "115_RayCast/RayCastSample.h"
+#endif
+#include "116_VirtualFileSystem/VFSSample.h"
+#if URHO3D_PHYSICS
+#include "117_PointerAdapter/PointerAdapterSample.h"
+#include "118_CameraShake/CameraShake.h"
+#endif
 #include "Rotator.h"
 
 #include "SamplesManager.h"
@@ -161,8 +172,9 @@ SamplesManager::SamplesManager(Context* context) :
 void SamplesManager::Setup()
 {
     // Modify engine startup parameters
-    engineParameters_[EP_WINDOW_TITLE] = "rbfx samples";
-    engineParameters_[EP_LOG_NAME]     = GetSubsystem<FileSystem>()->GetAppPreferencesDir("rbfx", "samples") + GetTypeName() + ".log";
+    engineParameters_[EP_WINDOW_TITLE] = "Samples";
+    engineParameters_[EP_APPLICATION_NAME] = "Built-in Samples";
+    engineParameters_[EP_LOG_NAME]     = "conf://Samples.log";
     engineParameters_[EP_FULL_SCREEN]  = false;
     engineParameters_[EP_HEADLESS]     = false;
     engineParameters_[EP_SOUND]        = true;
@@ -172,7 +184,15 @@ void SamplesManager::Setup()
     engineParameters_[EP_ORIENTATIONS] = "Portrait";
 #endif
     if (!engineParameters_.contains(EP_RESOURCE_PREFIX_PATHS))
+    {
         engineParameters_[EP_RESOURCE_PREFIX_PATHS] = ";..;../..";
+        if (GetPlatform() == PlatformId::MacOS ||
+            GetPlatform() == PlatformId::iOS)
+            engineParameters_[EP_RESOURCE_PREFIX_PATHS] = ";../Resources;../..";
+        else
+            engineParameters_[EP_RESOURCE_PREFIX_PATHS] = ";..;../..";
+    }
+    engineParameters_[EP_AUTOLOAD_PATHS] = "Autoload";
 #if DESKTOP
     GetCommandLineParser().add_option("--sample", commandLineArgsTemp_);
 #endif
@@ -201,7 +221,8 @@ void SampleSelectionScreen::Deactivate()
 void SamplesManager::Start()
 {
     ResourceCache* cache = context_->GetSubsystem<ResourceCache>();
-    cache->SetAutoReloadResources(true);
+    VirtualFileSystem* vfs = context_->GetSubsystem<VirtualFileSystem>();
+    vfs->SetWatching(true);
 
     UI* ui = context_->GetSubsystem<UI>();
 
@@ -223,7 +244,9 @@ void SamplesManager::Start()
     inspectorNode_ = MakeShared<Scene>(context_);
     sampleSelectionScreen_ = MakeShared<SampleSelectionScreen>(context_);
     // Keyboard arrow keys are already handled by UI
-    sampleSelectionScreen_->dpadAdapter_.SetKeyboardEnabled(false);
+    DirectionalPadAdapterFlags flags = sampleSelectionScreen_->dpadAdapter_.GetSubscriptionMask();
+    flags.Set(DirectionalPadAdapterMask::Keyboard, false);
+    sampleSelectionScreen_->dpadAdapter_.SetSubscriptionMask(static_cast<DirectionalPadAdapterMask>(flags));
     context_->GetSubsystem<StateManager>()->EnqueueState(sampleSelectionScreen_);
 
 #if URHO3D_SYSTEMUI
@@ -231,12 +254,12 @@ void SamplesManager::Start()
         debugHud->ToggleAll();
 #endif
     auto* input = context_->GetSubsystem<Input>();
-    SubscribeToEvent(E_RELEASED, [this](StringHash, VariantMap& args) { OnClickSample(args); });
-    SubscribeToEvent(&sampleSelectionScreen_->dpadAdapter_, E_KEYUP, [this](StringHash, VariantMap& args) { OnArrowKeyPress(args); });
-    SubscribeToEvent(input, E_KEYUP, [this](StringHash, VariantMap& args) { OnKeyPress(args); });
-    SubscribeToEvent(E_SAMPLE_EXIT_REQUESTED, [this](StringHash, VariantMap&) { OnCloseCurrentSample(); });
-    SubscribeToEvent(E_JOYSTICKBUTTONDOWN, [this](StringHash, VariantMap& args) { OnButtonPress(args); });
-    SubscribeToEvent(E_BEGINFRAME, [this](StringHash, VariantMap& args) { OnFrameStart(); });
+    SubscribeToEvent(E_RELEASED, &SamplesManager::OnClickSample);
+    SubscribeToEvent(&sampleSelectionScreen_->dpadAdapter_, E_KEYUP, &SamplesManager::OnArrowKeyPress);
+    SubscribeToEvent(input, E_KEYUP, &SamplesManager::OnKeyPress);
+    SubscribeToEvent(E_SAMPLE_EXIT_REQUESTED, &SamplesManager::OnCloseCurrentSample);
+    SubscribeToEvent(E_JOYSTICKBUTTONDOWN, &SamplesManager::OnButtonPress);
+    SubscribeToEvent(E_BEGINFRAME, &SamplesManager::OnFrameStart);
 
 #if URHO3D_RMLUI
     auto* rmlUi = context_->GetSubsystem<RmlUI>();
@@ -382,10 +405,20 @@ void SamplesManager::Start()
 #endif
     RegisterSample<SplashScreenDemo>();
     RegisterSample<AggregatedInput>();
+#if URHO3D_ACTIONS
+    RegisterSample<ActionDemo>();
+#endif
 #if URHO3D_RMLUI
     RegisterSample<AdvancedUI>();
 #endif
+#if URHO3D_PHYSICS
     RegisterSample<RayCastSample>();
+#endif
+    RegisterSample<VFSSample>();
+#if URHO3D_PHYSICS
+    RegisterSample<PointerAdapterSample>();
+#endif
+    RegisterSample<CameraShake>();
 
     if (!commandLineArgs_.empty())
         StartSample(commandLineArgs_[0]);

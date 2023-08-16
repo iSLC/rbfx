@@ -54,6 +54,9 @@ public:
     bool IsContinuousRotation() const { return settings_.continuousRotations_; }
     /// @}
 
+    /// Find bone data by Node.
+    const IKNode* GetNodeData(Node* node) const;
+
 private:
     void OnNodeSet(Node* previousNode, Node* currentNode) override;
 
@@ -61,6 +64,7 @@ private:
     void RebuildSolvers();
     void SetOriginalTransforms();
     void UpdateOriginalTransforms();
+    void SendIKEvent(bool preSolve);
 
     bool solveWhenPaused_{};
     IKSettings settings_;

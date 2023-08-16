@@ -52,18 +52,21 @@ public:
     void SetPrefab(bool value) { isPrefab_ = value; }
 
     bool Save(Serializer& dest, InternalResourceFormat format, bool asPrefab = false) const;
-    bool SaveFile(const ea::string& fileName, InternalResourceFormat format, bool asPrefab = false) const;
+    bool SaveFile(const FileIdentifier& fileName, InternalResourceFormat format, bool asPrefab = false) const;
 
     /// Implement Resource.
     /// @{
     bool BeginLoad(Deserializer& source) override;
     bool EndLoad() override;
     bool Save(Serializer& dest) const override;
-    bool SaveFile(const ea::string& fileName) const override;
+    bool SaveFile(const FileIdentifier& fileName) const override;
     /// @}
 
     /// Return scene. It may be modified.
     Scene* GetScene() const { return scene_; }
+
+    /// Get name of XML root element.
+    static const char* GetXmlRootName();
 
 private:
     SharedPtr<Scene> scene_;

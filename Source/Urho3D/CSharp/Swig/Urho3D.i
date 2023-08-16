@@ -10,6 +10,7 @@ using namespace Urho3D;
 #define static_assert(...)
 #define EASTLAllocatorType eastl::allocator
 
+%include "Ignores.i"
 %include "stl.i"
 %include "stdint.i"
 %include "typemaps.i"
@@ -202,7 +203,9 @@ CSHARP_ARRAYS_FIXED(Urho3D::Vector4, global::Urho3DNet.Vector4)
 // Containers
 using StringMap = eastl::unordered_map<Urho3D::StringHash, eastl::string>;
 %template(ObjectReflectionMap) eastl::unordered_map<Urho3D::StringHash, Urho3D::SharedPtr<Urho3D::ObjectReflection>>;
+#if defined(URHO3D_PHYSICS)
 %template(CollisionGeometryDataCache) eastl::unordered_map<eastl::pair<Urho3D::Model*, unsigned>, Urho3D::SharedPtr<Urho3D::CollisionGeometryData>>;
+#endif
 
 // Declare inheritable classes in this file
 %include "Context.i"
@@ -311,6 +314,7 @@ namespace SDL
     public global::Urho3DNet.Graphics Graphics => (global::Urho3DNet.Graphics)Subsystems.Get(new StringHash("Graphics"));
     public global::Urho3DNet.Renderer Renderer => (global::Urho3DNet.Renderer)Subsystems.Get(new StringHash("Renderer"));
     public global::Urho3DNet.Log Log => (global::Urho3DNet.Log)Subsystems.Get(new StringHash("Log"));
+    public global::Urho3DNet.VirtualFileSystem VirtualFileSystem => (global::Urho3DNet.VirtualFileSystem)Subsystems.Get(new StringHash("VirtualFileSystem"));
   %}
 }
 #if URHO3D_NETWORK
@@ -331,6 +335,8 @@ namespace SDL
 %ignore Urho3D::Detail::CriticalSection;
 %ignore Urho3D::MutexLock;
 %ignore Urho3D::ObjectReflectionRegistry::GetReflection(StringHash typeNameHash) const;
+%ignore Urho3D::Object::IsInstanceOf(const TypeInfo* typeInfo);
+%ignore Urho3D::Object::SubscribeToEventManual;
 
 %include "Object.i"
 %director Urho3D::AttributeAccessor;
@@ -349,6 +355,13 @@ namespace SDL
 %include "Urho3D/Core/Timer.h"
 %include "Urho3D/Core/Spline.h"
 %include "Urho3D/Core/Mutex.h"
+%include "Urho3D/Core/Thread.h"
+
+%ignore Urho3D::WorkQueue::PostTask;
+%ignore Urho3D::WorkQueue::PostTaskForThread;
+%ignore Urho3D::WorkQueue::PostTaskForMainThread;
+%ignore Urho3D::WorkQueue::PostDelayedTaskForMainThread;
+%include "Urho3D/Core/WorkQueue.h"
 
 // --------------------------------------- Container ------------------------------------
 %include "Urho3D/Container/ByteVector.h"
@@ -389,17 +402,14 @@ namespace SDL
 %ignore Urho3D::TouchState::GetTouchedElement;
 %ignore Urho3D::Input::OnRawInput;
 
-%ignore Urho3D::DirectionAggregatorDetail::SubscriptionMask;
-%ignore Urho3D::DirectionalPadAdapterDetail::SubscriptionMask;
-
 %include "generated/Urho3D/_pre_input.i"
 %include "Urho3D/Input/InputConstants.h"
-%include "Urho3D/Input/Controls.h"
 %include "Urho3D/Input/Input.h"
 %include "Urho3D/Input/MultitouchAdapter.h"
 %include "Urho3D/Input/AxisAdapter.h"
 %include "Urho3D/Input/DirectionalPadAdapter.h"
 %include "Urho3D/Input/DirectionAggregator.h"
+%include "Urho3D/Input/PointerAdapter.h"
 
 // --------------------------------------- IO ---------------------------------------
 %ignore Urho3D::GetWideNativePath;
@@ -423,12 +433,14 @@ public:
 %interface_custom("%s", "I%s", Urho3D::AbstractFile);
 URHO3D_REFCOUNTED_INTERFACE(Urho3D::AbstractFile, Urho3D::RefCounted);
 %include "Urho3D/IO/AbstractFile.h"
+%include "Urho3D/IO/ScanFlags.h"
 %include "Urho3D/IO/Compression.h"
 %include "Urho3D/IO/File.h"
 %include "Urho3D/IO/Log.h"
 %include "Urho3D/IO/MemoryBuffer.h"
 %include "Urho3D/IO/VectorBuffer.h"
 %include "Urho3D/IO/FileSystem.h"
+%include "Urho3D/IO/FileIdentifier.h"
 %include "Urho3D/IO/MountPoint.h"
 %include "Urho3D/IO/VirtualFileSystem.h"
 %include "Urho3D/IO/PackageFile.h"
@@ -525,6 +537,7 @@ public:
 %include "Urho3D/Scene/Component.h"
 %include "Urho3D/Scene/Node.h"
 %include "Urho3D/Scene/Scene.h"
+%include "Urho3D/Scene/SceneResource.h"
 %include "Urho3D/Scene/SplinePath.h"
 %include "Urho3D/Scene/ValueAnimation.h"
 %include "Urho3D/Scene/LogicComponent.h"
@@ -534,9 +547,15 @@ public:
 %include "Urho3D/Scene/TrackedComponent.h"
 %include "Urho3D/Scene/PrefabReference.h"
 %include "Urho3D/Scene/PrefabResource.h"
+%include "Urho3D/Scene/ShakeComponent.h"
 
 // --------------------------------------- Extra components ---------------------------------------
+%ignore Urho3D::InputMap::GetMappings;
+
 %include "Urho3D/Input/FreeFlyController.h"
+%include "Urho3D/Input/MoveAndOrbitComponent.h"
+%include "Urho3D/Input/MoveAndOrbitController.h"
+%include "Urho3D/Input/InputMap.h"
 
 // --------------------------------------- Audio ---------------------------------------
 %ignore Urho3D::BufferedSoundStream::AddData(const ea::shared_array<signed char>& data, unsigned numBytes);
@@ -554,6 +573,29 @@ public:
 %include "Urho3D/Audio/SoundSource.h"
 %include "Urho3D/Audio/SoundSource3D.h"
 
+// --------------------------------------- Actions ---------------------------------------
+
+%include "Urho3D/Actions/BaseAction.h"
+%include "Urho3D/Actions/ActionSet.h"
+%include "Urho3D/Actions/ActionBuilder.h"
+%include "Urho3D/Actions/ActionState.h"
+%include "Urho3D/Actions/ActionManager.h"
+%include "Urho3D/Actions/FiniteTimeAction.h"
+%include "Urho3D/Actions/FiniteTimeActionState.h"
+%include "Urho3D/Actions/ActionInstant.h"
+%include "Urho3D/Actions/ActionInstantState.h"
+%include "Urho3D/Actions/AttributeAction.h"
+%include "Urho3D/Actions/AttributeActionState.h"
+%include "Urho3D/Actions/Attribute.h"
+%include "Urho3D/Actions/CallFunc.h"
+%include "Urho3D/Actions/Move.h"
+%include "Urho3D/Actions/Ease.h"
+%include "Urho3D/Actions/Parallel.h"
+%include "Urho3D/Actions/Sequence.h"
+%include "Urho3D/Actions/Misc.h"
+%include "Urho3D/Actions/Repeat.h"
+%include "Urho3D/Actions/ShaderParameter.h"
+
 // --------------------------------------- IK ---------------------------------------
 #if defined(URHO3D_IK)
 %ignore Urho3D::IKSolverComponent::Initialize;
@@ -569,10 +611,8 @@ public:
 %ignore Urho3D::PointOctreeQuery::TestDrawables;
 %ignore Urho3D::BoxOctreeQuery::TestDrawables;
 %ignore Urho3D::OctreeQuery::TestDrawables;
-%ignore Urho3D::UpdateDrawablesWork;
 %ignore Urho3D::ProcessLightWork;
 %ignore Urho3D::CheckVisibilityWork;
-%ignore Urho3D::CheckDrawableVisibilityWork;
 %ignore Urho3D::ELEMENT_TYPESIZES;
 %ignore Urho3D::ScratchBuffer;
 %ignore Urho3D::Drawable::batches_;
@@ -638,6 +678,8 @@ public:
 %ignore Urho3D::AnimationState::CalculateModelTracks;
 %ignore Urho3D::AnimationState::CalculateNodeTracks;
 %ignore Urho3D::AnimationState::CalculateAttributeTracks;
+%ignore Urho3D::AnimationParameters::Update;
+%ignore Urho3D::Animation::GetVariantTracks;
 %rename(DrawableFlags) Urho3D::DrawableFlag;
 
 %apply void* VOID_INT_PTR {
@@ -705,6 +747,13 @@ public:
 %include "Urho3D/Graphics/Renderer.h"
 %include "Urho3D/Graphics/Graphics.h"
 %include "Urho3D/Graphics/OutlineGroup.h"
+
+%include "Urho3D/Particles/ParticleGraphPin.h"
+%include "Urho3D/Particles/ParticleGraphNode.h"
+%include "Urho3D/Particles/ParticleGraphSystem.h"
+%include "Urho3D/Particles/ParticleGraphLayer.h"
+%include "Urho3D/Particles/ParticleGraphEffect.h"
+%include "Urho3D/Particles/ParticleGraphEmitter.h"
 
 // ------------------------------------- RenderPipeline -------------------------------------
 %include "generated/Urho3D/_pre_renderpipeline.i"
@@ -834,6 +883,7 @@ public:
 %include "Urho3D/Physics/RaycastVehicle.h"
 %include "Urho3D/Physics/RigidBody.h"
 %include "Urho3D/Physics/KinematicCharacterController.h"
+%include "Urho3D/Physics/TriggerAnimator.h"
 %template(PhysicsRaycastResultVector)   eastl::vector<Urho3D::PhysicsRaycastResult>;
 %template(RigidBodyVector)              eastl::vector<Urho3D::RigidBody*>;
 #endif
@@ -900,6 +950,22 @@ using ImGuiConfigFlags = unsigned;
 %include "Urho3D/UI/Window.h"
 %include "Urho3D/UI/View3D.h"
 %nocsattribute Urho3D::LineEdit::GetCursor;
+
+// --------------------------------------- RmlUI ---------------------------------------
+#if URHO3D_RMLUI
+%ignore Urho3D::FromRmlUi;
+%ignore Urho3D::ToRmlUi;
+%ignore Urho3D::RmlUIComponent::BindDataModelProperty;
+%ignore Urho3D::RmlUIComponent::BindDataModelEvent;
+
+// SWIG applies `override new` modifier by mistake.
+%csmethodmodifiers Urho3D::RmlUIComponent::OnNodeSet "protected override";
+
+%include "Urho3D/RmlUI/RmlSystem.h"
+%include "Urho3D/RmlUI/RmlUI.h"
+%include "Urho3D/RmlUI/RmlUIComponent.h"
+%include "Urho3D/RmlUI/RmlCanvasComponent.h"
+#endif
 
 // --------------------------------------- Urho2D ---------------------------------------
 #if URHO3D_URHO2D

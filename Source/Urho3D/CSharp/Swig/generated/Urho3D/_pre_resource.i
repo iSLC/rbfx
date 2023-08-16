@@ -9,8 +9,6 @@
 %ignore Urho3D::PRIORITY_LAST;
 %csconstvalue("0") Urho3D::CF_NONE;
 %csconstvalue("0") Urho3D::PLVT_NONE;
-%csconstvalue("0") Urho3D::RESOURCE_CHECKEXISTS;
-%csconstvalue("1") Urho3D::RESOURCE_GETFILE;
 %csattribute(Urho3D::JSONValue, %arg(Urho3D::JSONValueType), ValueType, GetValueType);
 %csattribute(Urho3D::JSONValue, %arg(Urho3D::JSONNumberType), NumberType, GetNumberType);
 %csattribute(Urho3D::JSONValue, %arg(bool), IsNull, IsNull);
@@ -103,14 +101,10 @@
 %csattribute(Urho3D::PListFile, %arg(Urho3D::PListValueMap), Root, GetRoot);
 %csattribute(Urho3D::ResourceCache, %arg(unsigned int), NumBackgroundLoadResources, GetNumBackgroundLoadResources);
 %csattribute(Urho3D::ResourceCache, %arg(ea::unordered_map<StringHash, ResourceGroup>), AllResources, GetAllResources);
-%csattribute(Urho3D::ResourceCache, %arg(ea::vector<ea::string>), ResourceDirs, GetResourceDirs);
-%csattribute(Urho3D::ResourceCache, %arg(ea::vector<SharedPtr<PackageFile>>), PackageFiles, GetPackageFiles);
 %csattribute(Urho3D::ResourceCache, %arg(unsigned long long), TotalMemoryUse, GetTotalMemoryUse);
-%csattribute(Urho3D::ResourceCache, %arg(bool), AutoReloadResources, GetAutoReloadResources, SetAutoReloadResources);
 %csattribute(Urho3D::ResourceCache, %arg(bool), ReturnFailedResources, GetReturnFailedResources, SetReturnFailedResources);
 %csattribute(Urho3D::ResourceCache, %arg(bool), SearchPackagesFirst, GetSearchPackagesFirst, SetSearchPackagesFirst);
 %csattribute(Urho3D::ResourceCache, %arg(int), FinishBackgroundResourcesMs, GetFinishBackgroundResourcesMs, SetFinishBackgroundResourcesMs);
-%csattribute(Urho3D::ResourceCache, %arg(unsigned int), NumResourceDirs, GetNumResourceDirs);
 %csattribute(Urho3D::XMLAttributeReference, %arg(Urho3D::XMLElement), Element, GetElement);
 %csattribute(Urho3D::XMLAttributeReference, %arg(char *), AttributeName, GetAttributeName);
 %csattribute(Urho3D::XMLOutputArchiveBlock, %arg(bool), IsUnorderedAccessSupported, IsUnorderedAccessSupported);
@@ -180,12 +174,4 @@ public static partial class E
         public static implicit operator StringHash(ChangeLanguageEvent e) { return e._event; }
     }
     public static ChangeLanguageEvent ChangeLanguage = new ChangeLanguageEvent();
-    public class ResourceRenamedEvent {
-        private StringHash _event = new StringHash("ResourceRenamed");
-        public StringHash From = new StringHash("From");
-        public StringHash To = new StringHash("To");
-        public ResourceRenamedEvent() { }
-        public static implicit operator StringHash(ResourceRenamedEvent e) { return e._event; }
-    }
-    public static ResourceRenamedEvent ResourceRenamed = new ResourceRenamedEvent();
 } %}

@@ -64,6 +64,12 @@
 %ignore Urho3D::EP_RESOURCE_PREFIX_PATHS;
 %constant const char* EpShaderCacheDir = "ShaderCacheDir";
 %ignore Urho3D::EP_SHADER_CACHE_DIR;
+%constant const char* EpShaderLogSources = "ShaderLogSource";
+%ignore Urho3D::EP_SHADER_LOG_SOURCES;
+%constant const char* EpShaderPolicyGlsl = "ShaderPolicyGLSL";
+%ignore Urho3D::EP_SHADER_POLICY_GLSL;
+%constant const char* EpShaderPolicyHlsl = "ShaderPolicyHLSL";
+%ignore Urho3D::EP_SHADER_POLICY_HLSL;
 %constant const char* EpShadows = "Shadows";
 %ignore Urho3D::EP_SHADOWS;
 %constant const char* EpSoundBuffer = "SoundBuffer";
@@ -140,6 +146,7 @@
 %csattribute(Urho3D::ApplicationState, %arg(Urho3D::UIElement *), UIRoot, GetUIRoot);
 %csattribute(Urho3D::ApplicationState, %arg(Urho3D::IntVector2), UICustomSize, GetUICustomSize, SetUICustomSize);
 %csattribute(Urho3D::ApplicationState, %arg(Urho3D::Color), DefaultFogColor, GetDefaultFogColor, SetDefaultFogColor);
+%csattribute(Urho3D::ApplicationState, %arg(Urho3D::ActionManager *), ActionManager, GetActionManager);
 %csattribute(Urho3D::StateManager, %arg(Urho3D::ApplicationState *), State, GetState);
 %csattribute(Urho3D::StateManager, %arg(Urho3D::StringHash), TargetState, GetTargetState);
 %csattribute(Urho3D::StateManager, %arg(Urho3D::Window *), FadeOverlay, GetFadeOverlay);

@@ -20,6 +20,7 @@
 // THE SOFTWARE.
 //
 
+#include "../../Core/IniHelpers.h"
 #include "../../Foundation/SceneViewTab/SceneSelectionRenderer.h"
 
 #include <Urho3D/Graphics/DebugRenderer.h>
@@ -89,6 +90,24 @@ void SceneSelectionRenderer::Render(SceneViewPage& scenePage)
     }
 }
 
+bool SceneSelectionRenderer::RenderTabContextMenu()
+{
+    if (ui::MenuItem("Draw Debug Geometry", nullptr, drawDebugGeometry_))
+        drawDebugGeometry_ = !drawDebugGeometry_;
+    return true;
+}
+
+void SceneSelectionRenderer::WriteIniSettings(ImGuiTextBuffer& output)
+{
+    WriteIntToIni(output, "SceneSelectionRenderer.DrawDebugGeometry", drawDebugGeometry_);
+}
+
+void SceneSelectionRenderer::ReadIniSettings(const char* line)
+{
+    if (const auto value = ReadIntFromIni(line, "SceneSelectionRenderer.DrawDebugGeometry"))
+        drawDebugGeometry_ = *value != 0;
+}
+
 SceneSelectionRenderer::PageState& SceneSelectionRenderer::GetOrInitializeState(SceneViewPage& scenePage) const
 {
     ea::any& stateWrapped = scenePage.GetAddonData(*this);
@@ -112,10 +131,12 @@ bool SceneSelectionRenderer::PrepareInternalComponents(SceneViewPage& scenePage,
         state.directSelection_ = scene->CreateComponent<OutlineGroup>();
         state.directSelection_->SetRenderOrder(DirectSelectionRenderOrder);
         state.directSelection_->SetTemporary(true);
+        state.directSelection_->SetDebug(true);
 
         state.indirectSelection_ = scene->CreateComponent<OutlineGroup>();
         state.indirectSelection_->SetRenderOrder(IndirectSelectionRenderOrder);
         state.indirectSelection_->SetTemporary(true);
+        state.indirectSelection_->SetDebug(true);
     }
 
     return state.directSelection_ && state.indirectSelection_;
@@ -187,6 +208,8 @@ void SceneSelectionRenderer::DrawNodeSelection(Scene* scene, Node* node, bool re
 
 void SceneSelectionRenderer::DrawComponentSelection(Scene* scene, Component* component)
 {
+    if (!drawDebugGeometry_)
+        return;
     auto debugRenderer = scene->GetComponent<DebugRenderer>();
     component->DrawDebugGeometry(debugRenderer, true);
 }

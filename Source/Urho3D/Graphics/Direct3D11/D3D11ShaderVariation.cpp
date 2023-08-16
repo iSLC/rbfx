@@ -25,13 +25,14 @@
 #include "../../Graphics/Graphics.h"
 #include "../../Graphics/GraphicsImpl.h"
 #include "../../Graphics/Shader.h"
-#include "../../Graphics/ShaderDefineArray.h"
-#include "../../Graphics/ShaderConverter.h"
 #include "../../Graphics/VertexBuffer.h"
 #include "../../IO/File.h"
-#include "../../IO/FileSystem.h"
 #include "../../IO/Log.h"
 #include "../../Resource/ResourceCache.h"
+#include "../../Shader/ShaderSourceLogger.h"
+#include "../../Shader/ShaderOptimizer.h"
+#include "../../Shader/ShaderTranslator.h"
+#include "Urho3D/IO/VirtualFileSystem.h"
 
 #include <d3dcompiler.h>
 
@@ -85,7 +86,8 @@ bool ShaderVariation::Create()
     SplitPath(owner_->GetName(), path, name, extension);
     extension = ShaderVariation_shaderExtensions[type_];
 
-    ea::string binaryShaderName = graphics_->GetShaderCacheDir() + name + "_" + StringHash(defines_).ToString() + extension;
+    const FileIdentifier& cacheDir = graphics_->GetShaderCacheDir();
+    const FileIdentifier binaryShaderName = cacheDir + (name + "_" + StringHash(defines_).ToString() + extension);
 
     if (!LoadByteCode(binaryShaderName))
     {
@@ -172,23 +174,26 @@ void ShaderVariation::SetDefines(const ea::string& defines)
     defines_ = defines;
 }
 
-bool ShaderVariation::LoadByteCode(const ea::string& binaryShaderName)
+bool ShaderVariation::LoadByteCode(const FileIdentifier& binaryShaderName)
 {
-    ResourceCache* cache = owner_->GetSubsystem<ResourceCache>();
-    if (!cache->Exists(binaryShaderName))
+    const VirtualFileSystem* vfs = owner_->GetSubsystem<VirtualFileSystem>();
+    if (!vfs->Exists(binaryShaderName))
         return false;
 
-    const FileSystem* fileSystem = owner_->GetSubsystem<FileSystem>();
-    const unsigned sourceTimeStamp = owner_->GetTimeStamp();
+    const FileTime sourceTimeStamp = owner_->GetTimeStamp();
     // If source code is loaded from a package, its timestamp will be zero. Else check that binary is not older
     // than source
-    if (sourceTimeStamp && fileSystem->GetLastModifiedTime(cache->GetResourceFileName(binaryShaderName)) < sourceTimeStamp)
-        return false;
+    if (sourceTimeStamp)
+    {
+        const FileTime bytecodeTimeStamp = vfs->GetLastModifiedTime(binaryShaderName, false);
+        if (bytecodeTimeStamp && bytecodeTimeStamp < sourceTimeStamp)
+            return false;
+    }
 
-    const AbstractFilePtr file = cache->GetFile(binaryShaderName);
+    const AbstractFilePtr file = vfs->OpenFile(binaryShaderName, FILE_READ);
     if (!file || file->ReadFileID() != "USHD")
     {
-        URHO3D_LOGERROR(binaryShaderName + " is not a valid shader bytecode file");
+        URHO3D_LOGERROR("{} is not a valid shader bytecode file", binaryShaderName.ToUri());
         return false;
     }
 
@@ -237,7 +242,7 @@ bool ShaderVariation::LoadByteCode(const ea::string& binaryShaderName)
     }
     else
     {
-        URHO3D_LOGERROR(binaryShaderName + " has zero length bytecode");
+        URHO3D_LOGERROR("{} has zero length bytecode", binaryShaderName.ToUri());
         return false;
     }
 }
@@ -276,17 +281,34 @@ bool ShaderVariation::Compile()
     defines.Append("D3D11");
 
     // Convert shader source code if GLSL
-    static thread_local ea::string convertedShaderSourceCode;
     if (owner_->IsGLSL())
     {
         defines.Append("DESKTOP_GRAPHICS");
         defines.Append("GL3");
 
         const ea::string& universalSourceCode = owner_->GetSourceCode(type_);
-        ea::string errorMessage;
-        if (!ConvertShaderToHLSL5(type_, universalSourceCode, defines, convertedShaderSourceCode, errorMessage))
+
+        static thread_local SpirVShader spirvShader;
+        static thread_local TargetShader hlslShader;
+
+        ParseUniversalShader(spirvShader, type_, universalSourceCode, defines);
+        if (!spirvShader)
         {
-            URHO3D_LOGERROR("Failed to convert shader {} from GLSL:\n{}{}", GetFullName(), Shader::GetShaderFileList(), errorMessage);
+            URHO3D_LOGERROR("Failed to convert shader {} from GLSL to SPIR-V:\n{}{}", GetFullName(),
+                Shader::GetShaderFileList(), spirvShader.compilerOutput_);
+            return false;
+        }
+
+#ifdef URHO3D_SHADER_OPTIMIZER
+        if (graphics_->GetPolicyHLSL() == ShaderTranslationPolicy::Optimize)
+            OptimizeSpirVShader(spirvShader, TargetShaderLanguage::HLSL_5_0);
+#endif
+
+        TranslateSpirVShader(hlslShader, spirvShader, TargetShaderLanguage::HLSL_5_0);
+        if (!hlslShader)
+        {
+            URHO3D_LOGERROR("Failed to convert shader {} from SPIR-V to HLSL:\n{}{}", GetFullName(),
+                Shader::GetShaderFileList(), hlslShader.compilerOutput_);
             return false;
         }
 
@@ -297,7 +319,7 @@ bool ShaderVariation::Compile()
             URHO3D_LOGWARNING("Shader {} does not use the define(s): {}", GetFullName(), ea::string::joined(unusedDefines, ", "));
 #endif
 
-        sourceCode = &convertedShaderSourceCode;
+        sourceCode = &hlslShader.sourceCode_;
         entryPoint = "main";
     }
     else
@@ -318,6 +340,8 @@ bool ShaderVariation::Compile()
 #endif
         }
     }
+
+    LogShaderSource(owner_->GetName(), type_, defines_, *sourceCode, "hlsl");
 
     D3D_SHADER_MACRO endMacro;
     endMacro.Name = nullptr;
@@ -436,27 +460,12 @@ void ShaderVariation::ParseParameters(unsigned char* bufData, unsigned bufSize)
     reflection->Release();
 }
 
-void ShaderVariation::SaveByteCode(const ea::string& binaryShaderName)
+void ShaderVariation::SaveByteCode(const FileIdentifier& binaryShaderName)
 {
-    ResourceCache* cache = owner_->GetSubsystem<ResourceCache>();
-    FileSystem* fileSystem = owner_->GetSubsystem<FileSystem>();
+    VirtualFileSystem* vfs = owner_->GetSubsystem<VirtualFileSystem>();
 
-    // Filename may or may not be inside the resource system
-    ea::string fullName = binaryShaderName;
-    if (!IsAbsolutePath(fullName))
-    {
-        // If not absolute, use the resource dir of the shader
-        ea::string shaderFileName = cache->GetResourceFileName(owner_->GetName());
-        if (shaderFileName.empty())
-            return;
-        fullName = shaderFileName.substr(0, shaderFileName.find(owner_->GetName())) + binaryShaderName;
-    }
-    ea::string path = GetPath(fullName);
-    if (!fileSystem->DirExists(path))
-        fileSystem->CreateDir(path);
-
-    auto file = MakeShared<File>(owner_->GetContext(), fullName, FILE_WRITE);
-    if (!file->IsOpen())
+    auto file = vfs->OpenFile(binaryShaderName, FILE_WRITE);
+    if (!file)
         return;
 
     file->WriteFileID("USHD");

@@ -30,9 +30,11 @@
 #include "../Project/CreateDefaultScene.h"
 #include "../Project/ResourceEditorTab.h"
 
+#include <Urho3D/IO/MountedDirectory.h>
 #include <Urho3D/Core/ProcessUtils.h>
 #include <Urho3D/Engine/Engine.h>
 #include <Urho3D/Engine/EngineDefs.h>
+#include <Urho3D/Engine/EngineEvents.h>
 #include <Urho3D/IO/File.h>
 #include <Urho3D/IO/FileSystem.h>
 #include <Urho3D/IO/VirtualFileSystem.h>
@@ -144,23 +146,31 @@ ea::pair<ea::string, ea::string> ParseCommand(const ea::string& command)
 ResourceCacheGuard::ResourceCacheGuard(Context* context)
     : context_(context)
 {
-    auto cache = context_->GetSubsystem<ResourceCache>();
-    oldResourceDirs_ = cache->GetResourceDirs();
-    for (const ea::string& resourceDir : oldResourceDirs_)
+    const auto vfs = context_->GetSubsystem<VirtualFileSystem>();
+    for (unsigned i = 0; i < vfs->NumMountPoints(); ++i)
     {
-        if (oldCoreData_.empty() && resourceDir.ends_with("/CoreData/"))
-            oldCoreData_ = resourceDir;
-        if (oldEditorData_.empty() && resourceDir.ends_with("/EditorData/"))
-            oldEditorData_ = resourceDir;
+        SharedPtr<MountPoint> mountPoint{vfs->GetMountPoint(i)};
+        oldResourceDirs_.push_back(mountPoint);
+        auto* dir = dynamic_cast<MountedDirectory*>(mountPoint.Get());
+        if (dir)
+        {
+            const auto& resourceDir = dir->GetDirectory();
+            if (oldCoreData_.empty() && resourceDir.ends_with("/CoreData/"))
+                oldCoreData_ = resourceDir;
+            if (oldEditorData_.empty() && resourceDir.ends_with("/EditorData/"))
+                oldEditorData_ = resourceDir;
+        }
     }
 }
 
 ResourceCacheGuard::~ResourceCacheGuard()
 {
-    auto cache = context_->GetSubsystem<ResourceCache>();
-    cache->RemoveAllResourceDirs();
-    for (const ea::string& resourceDir : oldResourceDirs_)
-        cache->AddResourceDir(resourceDir);
+    auto vfs = context_->GetSubsystem<VirtualFileSystem>();
+    vfs->UnmountAll();
+    for (const auto& mountPoint : oldResourceDirs_)
+    {
+        vfs->Mount(mountPoint);
+    }
 }
 
 bool AnalyzeFileContext::HasXMLRoot(ea::string_view root) const
@@ -192,6 +202,7 @@ Project::Project(Context* context, const ea::string& projectPath, const ea::stri
     , coreDataPath_(projectPath_ + "CoreData/")
     , cachePath_(projectPath_ + "Cache/")
     , tempPath_(projectPath_ + "Temp/")
+    , artifactsPath_(projectPath_ + "Artifacts/")
     , projectJsonPath_(projectPath_ + "Project.json")
     , settingsJsonPath_(settingsJsonPath)
     , cacheJsonPath_(projectPath_ + "Cache.json")
@@ -218,6 +229,8 @@ Project::Project(Context* context, const ea::string& projectPath, const ea::stri
     context_->RemoveSubsystem<PluginManager>();
     context_->RegisterSubsystem(pluginManager_);
 
+    SubscribeToEvent(E_ENDPLUGINRELOAD, [this] { pluginReloadEndTime_ = std::chrono::steady_clock::now(); });
+
     if (!isHeadless_ && !isReadOnly_)
         ui::GetIO().IniFilename = uiIniPath_.c_str();
 
@@ -230,6 +243,7 @@ Project::Project(Context* context, const ea::string& projectPath, const ea::stri
     assetManager_->OnInitialized.Subscribe(this, [=](Project*) mutable { initializationGuard.reset(); });
 
     IgnoreFileNamePattern("*.user.json");
+    IgnoreFileNamePattern("*.blend1");
 
     ApplyPlugins();
 
@@ -512,6 +526,13 @@ void Project::EnsureDirectoryInitialized()
         fs->CreateDirsRecursive(tempPath_);
     }
 
+    if (!fs->DirExists(artifactsPath_))
+    {
+        if (fs->FileExists(artifactsPath_))
+            fs->Delete(artifactsPath_);
+        fs->CreateDirsRecursive(artifactsPath_);
+    }
+
     if (!fs->DirExists(coreDataPath_))
     {
         if (fs->FileExists(coreDataPath_))
@@ -597,14 +618,10 @@ void Project::InitializeResourceCache()
     const auto engine = GetSubsystem<Engine>();
     const auto cache = GetSubsystem<ResourceCache>();
     cache->ReleaseAllResources(true);
-    cache->RemoveAllResourceDirs();
-    cache->AddResourceDir(dataPath_);
-    cache->AddResourceDir(coreDataPath_);
-    cache->AddResourceDir(cachePath_);
-    cache->AddResourceDir(oldCacheState_.GetEditorData());
 
     const auto vfs = GetSubsystem<VirtualFileSystem>();
     vfs->UnmountAll();
+    vfs->MountRoot();
     vfs->MountDir(oldCacheState_.GetEditorData());
     vfs->MountDir(coreDataPath_);
     vfs->MountDir(dataPath_);
@@ -682,6 +699,10 @@ void Project::SaveGitIgnore()
     content += "/Preview.png\n";
     content += "\n";
 
+    content += "# Ignore artifacts\n";
+    content += "/Artifacts/\n";
+    content += "\n";
+
     content += "# Ignore internal files\n";
     for (const ea::string& pattern : ignoredFileNames_)
         content += Format("{}\n", pattern);
@@ -730,6 +751,8 @@ void Project::Render()
     {
         initialized_ = true;
         initialFocusPending = true;
+
+        pluginReloadEndTime_ = ea::nullopt;
 
         OnInitialized(this);
 
@@ -862,6 +885,7 @@ void Project::RenderToolbar()
         focusedRootTab_->RenderToolbar();
 
     RenderAssetsToolbar();
+    RenderPluginReloadToolbar();
 }
 
 void Project::RenderAssetsToolbar()
@@ -878,6 +902,24 @@ void Project::RenderAssetsToolbar()
     // Show some small progress from the start for better visibility
     const float progress = Lerp(0.05f, 1.0f, ratio);
     ui::ProgressBar(progress, ImVec2{200.0f, 0.0f}, text.c_str());
+}
+
+void Project::RenderPluginReloadToolbar()
+{
+    using namespace std::chrono_literals;
+
+    if (!pluginReloadEndTime_)
+        return;
+
+    const auto currentTime = std::chrono::steady_clock::now();
+    const auto elapsedSeconds = std::chrono::duration<double>(currentTime - *pluginReloadEndTime_).count();
+    if (elapsedSeconds < 60.0)
+    {
+        const double elapsedSecondsPretty =
+            elapsedSeconds <= 10.0 ? Ceil(elapsedSeconds) : SnapFloor(elapsedSeconds, 10.0);
+        ui::SameLine();
+        ui::Text("Plugins reloaded: %.0f seconds ago", elapsedSecondsPretty);
+    }
 }
 
 void Project::RenderProjectMenu()
