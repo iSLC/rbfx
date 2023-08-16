@@ -69,6 +69,9 @@
 #include "../Include/intermediate.h"
 #include "../Include/InfoSink.h"
 
+// Urho3D: GCC >= 13.x seems to be more strict about using fixed width integer types without including the appropriate header.
+#include <cstdint>
+// Urho3D: end modification
 namespace glslang {
 
 //
